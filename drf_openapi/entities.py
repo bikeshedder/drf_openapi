@@ -148,6 +148,18 @@ class OpenApiSchemaGenerator(SchemaGenerator):
             doc.append(line.strip())
         return '\n'.join(doc)
 
+    def get_serializer_class(self, view, method_func, property_name):
+        '''
+        Get serializer from a view using the given `property_name` and
+        falling back to `get_serializer_class` or `serializer_class`.
+        '''
+        if hasattr(method_func, property_name):
+            return getattr(method_func, property_name)
+        if hasattr(view, 'get_serializer_class'):
+            return view.get_serializer_class()
+        if hasattr(view, 'serializer_class'):
+            return view.serializer_class
+
     def get_link(self, path, method, view, version=None):
         fields = self.get_path_fields(path, method, view)
         fields += self.get_serializer_fields(path, method, view, version=version)
@@ -164,13 +176,13 @@ class OpenApiSchemaGenerator(SchemaGenerator):
         method_name = getattr(view, 'action', method.lower())
         method_func = getattr(view, method_name, None)
 
-        request_serializer_class = getattr(method_func, 'request_serializer', None)
+        request_serializer_class = self.get_serializer_class(view, method_func, 'request_serializer')
         if request_serializer_class and issubclass(request_serializer_class, VersionedSerializers):
             request_doc = self.get_serializer_doc(request_serializer_class)
             if request_doc:
                 description = description + '\n\n**Request Description:**\n' + request_doc
 
-        response_serializer_class = getattr(method_func, 'response_serializer', None)
+        response_serializer_class = self.get_serializer_class(view, method_func, 'response_serializer')
         if response_serializer_class and issubclass(response_serializer_class, VersionedSerializers):
             res_doc = self.get_serializer_doc(response_serializer_class)
             if res_doc:
@@ -178,10 +190,6 @@ class OpenApiSchemaGenerator(SchemaGenerator):
             response_serializer_class = response_serializer_class.get(version)
 
         if not response_serializer_class and method_name in ('list', 'retrieve'):
-            if hasattr(view, 'get_serializer_class'):
-                response_serializer_class = view.get_serializer_class()
-            elif hasattr(view, 'serializer_class'):
-                response_serializer_class = view.serializer_class
             if response_serializer_class and method_name == 'list':
                 response_serializer_class = self.get_paginator_serializer(
                     view, response_serializer_class)
@@ -275,11 +283,17 @@ class OpenApiSchemaGenerator(SchemaGenerator):
         if method not in ('PUT', 'PATCH', 'POST'):
             return []
 
-        if not hasattr(view, 'serializer_class') and not hasattr(view, 'get_serializer_class'):
+        method_name = getattr(view, 'action', method.lower())
+        method_func = getattr(view, method_name, None)
+
+        serializer_class = self.get_serializer_class(view, method_func, 'request_serializer')
+
+        if serializer_class is None:
             return []
 
-        serializer_class = view.get_serializer_class() if hasattr(view, 'get_serializer_class') \
-            else view.serializer_class
+        if issubclass(serializer_class, VersionedSerializers):
+            serializer_class = serializer_class.get(version)
+
         serializer = serializer_class()
 
         if isinstance(serializer, serializers.ListSerializer):
